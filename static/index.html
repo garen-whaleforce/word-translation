@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF 測試報告翻譯服務</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>PDF 測試報告 → 繁體中文 Word 翻譯服務</h1>
+            <p class="subtitle">Upload your English technical PDF, convert to Word and translate to Traditional Chinese.</p>
+
+            <form id="upload-form">
+                <div class="upload-area" id="upload-area">
+                    <div class="upload-icon">📄</div>
+                    <p>拖曳 PDF 檔案到這裡，或點擊選擇檔案</p>
+                    <p class="file-hint">僅接受 .pdf 檔案，最大 20MB，可選擇多個檔案</p>
+                    <input type="file" id="file-input" accept=".pdf" multiple hidden>
+                </div>
+
+                <!-- File Queue -->
+                <div id="file-queue" class="file-queue hidden">
+                    <div class="queue-header">
+                        <span>待處理檔案</span>
+                        <button type="button" id="clear-all" class="btn-clear-all">全部清除</button>
+                    </div>
+                    <ul id="queue-list" class="queue-list"></ul>
+                </div>
+
+                <div class="button-group">
+                    <button type="submit" id="submit-btn" class="btn-primary" disabled>
+                        開始批次翻譯
+                    </button>
+                    <button type="button" id="stop-btn" class="btn-stop hidden">
+                        停止
+                    </button>
+                </div>
+            </form>
+
+            <!-- Batch Progress -->
+            <div id="batch-progress" class="batch-progress hidden">
+                <div class="batch-progress-header">
+                    <span>批次進度</span>
+                    <span id="batch-progress-text">0 / 0</span>
+                </div>
+                <div class="batch-progress-bar">
+                    <div id="batch-progress-fill" class="batch-progress-fill"></div>
+                </div>
+            </div>
+
+            <!-- Results Section -->
+            <div id="results-section" class="results-section hidden">
+                <h3>翻譯結果</h3>
+                <ul id="results-list" class="results-list"></ul>
+            </div>
+
+            <div id="error-section" class="error-section hidden">
+                <p id="error-text"></p>
+            </div>
+        </div>
+
+        <footer>
+            <p>Powered by pdf2docx & OpenAI GPT-4o-mini</p>
+        </footer>
+    </div>
+
+    <script src="main.js"></script>
+</body>
+</html>
