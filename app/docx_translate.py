@@ -13,7 +13,7 @@ from typing import Callable, Optional, Awaitable
 from docx import Document
 from docx.table import Table
 from docx.text.paragraph import Paragraph
-from openai import AsyncOpenAI, APIError, RateLimitError
+from openai import AsyncAzureOpenAI, APIError, RateLimitError
 
 
 class TranslationError(Exception):
@@ -85,9 +85,10 @@ IMPORTANT - Industry-specific terminology (MUST follow these translations):
 - "minimum" / "at least" → 至少 (NOT 最小/最低)"""
 
 
-CHUNK_SIZE = 1500  # characters per chunk
+CHUNK_SIZE = 2000  # characters per chunk (increased for efficiency)
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds
+MAX_CONCURRENT_TRANSLATIONS = 5  # number of parallel API calls
 
 # Special translations for test result indicators
 SPECIAL_TRANSLATIONS = {
@@ -149,24 +150,31 @@ def filter_refusal_message(text: str) -> str:
 ProgressCallback = Callable[[str, int, int], Awaitable[None]]
 
 
-def get_openai_client() -> AsyncOpenAI:
+def get_openai_client() -> AsyncAzureOpenAI:
     """
-    Create and return an AsyncOpenAI client.
+    Create and return an AsyncAzureOpenAI client.
 
     Raises:
-        TranslationError: If OPENAI_API_KEY is not set.
+        TranslationError: If Azure OpenAI credentials are not set.
     """
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
+    api_key = os.environ.get("AZURE_OPENAI_API_KEY")
+    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+
+    if not api_key or not endpoint:
         raise TranslationError(
-            "OPENAI_API_KEY environment variable is not set. "
-            "Please set it to use the translation service."
+            "Azure OpenAI credentials not set. "
+            "Please set AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT."
         )
-    return AsyncOpenAI(api_key=api_key)
+    return AsyncAzureOpenAI(
+        api_key=api_key,
+        azure_endpoint=endpoint,
+        api_version=api_version
+    )
 
 
 async def translate_text_chunk(
-    client: AsyncOpenAI,
+    client: AsyncAzureOpenAI,
     text: str,
     stats: TranslationStats
 ) -> str:
@@ -190,14 +198,13 @@ async def translate_text_chunk(
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
+            deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-5-mini")
             response = await client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=deployment,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": text}
-                ],
-                temperature=0.1,
-                max_tokens=4096
+                ]
             )
 
             # Update stats
@@ -305,46 +312,35 @@ def create_chunks(elements: list[TextElement]) -> list[list[int]]:
     return chunks
 
 
-async def translate_elements(
-    client: AsyncOpenAI,
+async def translate_single_chunk(
+    client: AsyncAzureOpenAI,
     elements: list[TextElement],
-    chunks: list[list[int]],
+    chunk_indices: list[int],
     stats: TranslationStats,
-    progress_callback: Optional[ProgressCallback] = None
+    semaphore: asyncio.Semaphore
 ) -> None:
     """
-    Translate all text elements in chunks.
+    Translate a single chunk of elements.
 
     Args:
         client: The OpenAI async client.
-        elements: List of TextElement objects to translate.
-        chunks: List of index groups for batch translation.
+        elements: List of all TextElement objects.
+        chunk_indices: Indices of elements in this chunk.
         stats: TranslationStats object to update.
-        progress_callback: Optional callback for progress updates.
+        semaphore: Semaphore to limit concurrent API calls.
     """
-    # First pass: handle special translations (P, N/A, --, etc.)
-    for element in elements:
-        special = get_special_translation(element.original_text)
-        if special is not None:
-            element.translated_text = special
-
     separator = " ||| "
-    total_chunks = len(chunks)
 
-    for chunk_idx, chunk_indices in enumerate(chunks):
-        # Report progress
-        if progress_callback:
-            await progress_callback("translating", chunk_idx + 1, total_chunks)
+    # Filter out elements that already have special translations
+    indices_to_translate = [
+        idx for idx in chunk_indices
+        if not elements[idx].translated_text
+    ]
 
-        # Filter out elements that already have special translations
-        indices_to_translate = [
-            idx for idx in chunk_indices
-            if not elements[idx].translated_text
-        ]
+    if not indices_to_translate:
+        return
 
-        if not indices_to_translate:
-            continue
-
+    async with semaphore:
         # Combine texts in this chunk
         texts = [elements[i].original_text for i in indices_to_translate]
         combined_text = separator.join(texts)
@@ -367,6 +363,49 @@ async def translate_elements(
             # Assign translations to elements
             for i, idx in enumerate(indices_to_translate):
                 elements[idx].translated_text = translated_texts[i].strip()
+
+
+async def translate_elements(
+    client: AsyncAzureOpenAI,
+    elements: list[TextElement],
+    chunks: list[list[int]],
+    stats: TranslationStats,
+    progress_callback: Optional[ProgressCallback] = None
+) -> None:
+    """
+    Translate all text elements in chunks using parallel processing.
+
+    Args:
+        client: The OpenAI async client.
+        elements: List of TextElement objects to translate.
+        chunks: List of index groups for batch translation.
+        stats: TranslationStats object to update.
+        progress_callback: Optional callback for progress updates.
+    """
+    # First pass: handle special translations (P, N/A, --, etc.)
+    for element in elements:
+        special = get_special_translation(element.original_text)
+        if special is not None:
+            element.translated_text = special
+
+    total_chunks = len(chunks)
+    if progress_callback:
+        await progress_callback("translating", 0, total_chunks)
+
+    # Create semaphore to limit concurrent API calls
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_TRANSLATIONS)
+
+    # Track completed chunks for progress reporting
+    completed = [0]
+
+    async def translate_with_progress(chunk_indices: list[int]) -> None:
+        await translate_single_chunk(client, elements, chunk_indices, stats, semaphore)
+        completed[0] += 1
+        if progress_callback:
+            await progress_callback("translating", completed[0], total_chunks)
+
+    # Run all chunk translations in parallel (limited by semaphore)
+    await asyncio.gather(*[translate_with_progress(chunk) for chunk in chunks])
 
 
 def write_translations_to_doc(doc: Document, elements: list[TextElement]) -> None:
