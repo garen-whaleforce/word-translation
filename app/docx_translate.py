@@ -111,7 +111,7 @@ Test/Measurement Terms:
 General Terms:
 - "interchangeable" → 不限 (NOT 可互換)
 - "minimum" / "at least" → 至少 (NOT 最小/最低)
-<<<<<<< HEAD
+- "optional" → 可選
 
 IMPORTANT - Table cell formatting rules:
 - Flammability rating cells: When you see "UL 94, UL 746C" or similar, output ONLY "UL 94" (remove UL 746C)
@@ -119,17 +119,11 @@ IMPORTANT - Table cell formatting rules:
 - Certification/approval cells with file numbers: Remove file numbers, keep ONLY the certification standard names
   Example: "VDE↓40029550↓UL E249609" → "VDE" (remove all file numbers like 40029550, E249609, E121562, etc.)
   Example: "UL 94, UL 746C↓UL E121562" → "UL 94" (keep only the flammability standard)"""
-=======
-- "optional" → 可選"""
->>>>>>> 19e3e3e (feat: add Azure OpenAI support, concurrent processing, and Adobe PDF API)
 
 
 CHUNK_SIZE = 2000  # characters per chunk (increased for efficiency)
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds
-<<<<<<< HEAD
-MAX_CONCURRENT_TRANSLATIONS = 5  # number of parallel API calls
-=======
 MAX_CONCURRENT_CHUNKS = 15  # max concurrent API calls per file
 MAX_CONCURRENT_FILES = 2  # max concurrent file translations
 
@@ -143,7 +137,7 @@ def get_file_semaphore() -> asyncio.Semaphore:
     if _file_semaphore is None:
         _file_semaphore = asyncio.Semaphore(MAX_CONCURRENT_FILES)
     return _file_semaphore
->>>>>>> 19e3e3e (feat: add Azure OpenAI support, concurrent processing, and Adobe PDF API)
+
 
 # Special translations for test result indicators
 SPECIAL_TRANSLATIONS = {
@@ -201,37 +195,11 @@ def filter_refusal_message(text: str) -> str:
 
     return text
 
+
 # Type alias for progress callback: (stage: str, current: int, total: int) -> Awaitable[None]
 ProgressCallback = Callable[[str, int, int], Awaitable[None]]
 
 
-<<<<<<< HEAD
-def get_openai_client() -> AsyncAzureOpenAI:
-    """
-    Create and return an AsyncAzureOpenAI client.
-
-    Raises:
-        TranslationError: If Azure OpenAI credentials are not set.
-    """
-    api_key = os.environ.get("AZURE_OPENAI_API_KEY")
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-    api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
-
-    if not api_key or not endpoint:
-        raise TranslationError(
-            "Azure OpenAI credentials not set. "
-            "Please set AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT."
-        )
-    return AsyncAzureOpenAI(
-        api_key=api_key,
-        azure_endpoint=endpoint,
-        api_version=api_version
-    )
-
-
-async def translate_text_chunk(
-    client: AsyncAzureOpenAI,
-=======
 def get_openai_client() -> Tuple[OpenAIClient, str]:
     """
     Create and return an OpenAI client (Azure or standard).
@@ -246,7 +214,7 @@ def get_openai_client() -> Tuple[OpenAIClient, str]:
     azure_api_key = os.environ.get("AZURE_OPENAI_API_KEY")
     azure_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
     azure_deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT")
-    azure_api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
+    azure_api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
 
     if azure_api_key and azure_endpoint and azure_deployment:
         client = AsyncAzureOpenAI(
@@ -269,7 +237,6 @@ def get_openai_client() -> Tuple[OpenAIClient, str]:
 async def translate_text_chunk(
     client: OpenAIClient,
     model: str,
->>>>>>> 19e3e3e (feat: add Azure OpenAI support, concurrent processing, and Adobe PDF API)
     text: str,
     stats: TranslationStats
 ) -> str:
@@ -294,22 +261,13 @@ async def translate_text_chunk(
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
-            deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-5-mini")
             response = await client.chat.completions.create(
-<<<<<<< HEAD
-                model=deployment,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": text}
-                ]
-=======
                 model=model,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": text}
                 ],
                 max_completion_tokens=4096
->>>>>>> 19e3e3e (feat: add Azure OpenAI support, concurrent processing, and Adobe PDF API)
             )
 
             # Update stats
@@ -417,28 +375,15 @@ def create_chunks(elements: list[TextElement]) -> list[list[int]]:
     return chunks
 
 
-<<<<<<< HEAD
-async def translate_single_chunk(
-    client: AsyncAzureOpenAI,
-=======
 async def translate_elements(
     client: OpenAIClient,
     model: str,
->>>>>>> 19e3e3e (feat: add Azure OpenAI support, concurrent processing, and Adobe PDF API)
     elements: list[TextElement],
-    chunk_indices: list[int],
+    chunks: list[list[int]],
     stats: TranslationStats,
-    semaphore: asyncio.Semaphore
+    progress_callback: Optional[ProgressCallback] = None
 ) -> None:
     """
-<<<<<<< HEAD
-    Translate a single chunk of elements.
-
-    Args:
-        client: The OpenAI async client.
-        elements: List of all TextElement objects.
-        chunk_indices: Indices of elements in this chunk.
-=======
     Translate all text elements in chunks with concurrent processing.
 
     Args:
@@ -446,27 +391,16 @@ async def translate_elements(
         model: The model or deployment name to use.
         elements: List of TextElement objects to translate.
         chunks: List of index groups for batch translation.
->>>>>>> 19e3e3e (feat: add Azure OpenAI support, concurrent processing, and Adobe PDF API)
         stats: TranslationStats object to update.
-        semaphore: Semaphore to limit concurrent API calls.
+        progress_callback: Optional callback for progress updates.
     """
+    # First pass: handle special translations (P, N/A, --, etc.)
+    for element in elements:
+        special = get_special_translation(element.original_text)
+        if special is not None:
+            element.translated_text = special
+
     separator = " ||| "
-<<<<<<< HEAD
-
-    # Filter out elements that already have special translations
-    indices_to_translate = [
-        idx for idx in chunk_indices
-        if not elements[idx].translated_text
-    ]
-
-    if not indices_to_translate:
-        return
-
-    async with semaphore:
-        # Combine texts in this chunk
-        texts = [elements[i].original_text for i in indices_to_translate]
-        combined_text = separator.join(texts)
-=======
     total_chunks = len(chunks)
     completed_count = 0
     count_lock = asyncio.Lock()
@@ -494,7 +428,6 @@ async def translate_elements(
             # Combine texts in this chunk
             texts = [elements[i].original_text for i in indices_to_translate]
             combined_text = separator.join(texts)
->>>>>>> 19e3e3e (feat: add Azure OpenAI support, concurrent processing, and Adobe PDF API)
 
             # Translate the combined text
             translated_combined = await translate_text_chunk(client, model, combined_text, stats)
@@ -523,49 +456,6 @@ async def translate_elements(
 
     # Process all chunks concurrently
     await asyncio.gather(*[process_chunk(chunk) for chunk in chunks])
-
-
-async def translate_elements(
-    client: AsyncAzureOpenAI,
-    elements: list[TextElement],
-    chunks: list[list[int]],
-    stats: TranslationStats,
-    progress_callback: Optional[ProgressCallback] = None
-) -> None:
-    """
-    Translate all text elements in chunks using parallel processing.
-
-    Args:
-        client: The OpenAI async client.
-        elements: List of TextElement objects to translate.
-        chunks: List of index groups for batch translation.
-        stats: TranslationStats object to update.
-        progress_callback: Optional callback for progress updates.
-    """
-    # First pass: handle special translations (P, N/A, --, etc.)
-    for element in elements:
-        special = get_special_translation(element.original_text)
-        if special is not None:
-            element.translated_text = special
-
-    total_chunks = len(chunks)
-    if progress_callback:
-        await progress_callback("translating", 0, total_chunks)
-
-    # Create semaphore to limit concurrent API calls
-    semaphore = asyncio.Semaphore(MAX_CONCURRENT_TRANSLATIONS)
-
-    # Track completed chunks for progress reporting
-    completed = [0]
-
-    async def translate_with_progress(chunk_indices: list[int]) -> None:
-        await translate_single_chunk(client, elements, chunk_indices, stats, semaphore)
-        completed[0] += 1
-        if progress_callback:
-            await progress_callback("translating", completed[0], total_chunks)
-
-    # Run all chunk translations in parallel (limited by semaphore)
-    await asyncio.gather(*[translate_with_progress(chunk) for chunk in chunks])
 
 
 def write_translations_to_doc(doc: Document, elements: list[TextElement]) -> None:
