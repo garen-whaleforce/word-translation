@@ -82,7 +82,14 @@ IMPORTANT - Industry-specific terminology (MUST follow these translations):
 - "varistor" / "MOV" → 突波吸收器 (NOT 壓敏電阻)
 - "triple insulated wire" → 三層絕緣線 (NOT 三重絕緣線)
 - "interchangeable" → 不限 (NOT 可互換)
-- "minimum" / "at least" → 至少 (NOT 最小/最低)"""
+- "minimum" / "at least" → 至少 (NOT 最小/最低)
+
+IMPORTANT - Table cell formatting rules:
+- Flammability rating cells: When you see "UL 94, UL 746C" or similar, output ONLY "UL 94" (remove UL 746C)
+- Empty or blank cells: Keep them empty/blank, do NOT add any content
+- Certification/approval cells with file numbers: Remove file numbers, keep ONLY the certification standard names
+  Example: "VDE↓40029550↓UL E249609" → "VDE" (remove all file numbers like 40029550, E249609, E121562, etc.)
+  Example: "UL 94, UL 746C↓UL E121562" → "UL 94" (keep only the flammability standard)"""
 
 
 CHUNK_SIZE = 2000  # characters per chunk (increased for efficiency)
