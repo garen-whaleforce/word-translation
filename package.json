@@ -1,0 +1,42 @@
+{
+  "name": "word-trans",
+  "version": "1.0.0",
+  "description": "PDF/DOCX to Traditional Chinese translation web app",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts",
+    "watch": "tsc -w"
+  },
+  "keywords": [
+    "translation",
+    "docx",
+    "pdf",
+    "azure-openai"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@adobe/pdfservices-node-sdk": "^4.1.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "fast-xml-parser": "^4.3.2",
+    "jszip": "^3.10.1",
+    "multer": "^1.4.5-lts.1",
+    "openai": "^4.72.0",
+    "pdf-parse": "^1.1.1",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/multer": "^1.4.11",
+    "@types/node": "^20.10.0",
+    "@types/pdf-parse": "^1.1.5",
+    "@types/pdfkit": "^0.17.4",
+    "@types/uuid": "^9.0.7",
+    "pdfkit": "^0.17.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.2"
+  }
+}

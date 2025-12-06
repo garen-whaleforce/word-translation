@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文件翻譯系統</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 40px 20px;
+      background: #f5f5f5;
+      color: #333;
+    }
+
+    h1 {
+      text-align: center;
+      color: #2c3e50;
+      margin-bottom: 10px;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #7f8c8d;
+      margin-bottom: 30px;
+    }
+
+    .upload-area {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+    }
+
+    .file-input-wrapper {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    #fileInput {
+      flex: 1;
+      padding: 12px;
+      border: 2px dashed #ddd;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    #fileInput:hover {
+      border-color: #3498db;
+    }
+
+    button {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+
+    #uploadBtn {
+      background: #3498db;
+      color: white;
+    }
+
+    #uploadBtn:hover:not(:disabled) {
+      background: #2980b9;
+    }
+
+    #uploadBtn:disabled {
+      background: #bdc3c7;
+      cursor: not-allowed;
+    }
+
+    #stopAllBtn {
+      background: #e74c3c;
+      color: white;
+      display: none;
+    }
+
+    #stopAllBtn:hover:not(:disabled) {
+      background: #c0392b;
+    }
+
+    #downloadAllBtn {
+      background: #2ecc71;
+      color: white;
+      display: none;
+      margin-left: 10px;
+    }
+
+    #downloadAllBtn:hover:not(:disabled) {
+      background: #27ae60;
+    }
+
+    .jobs-container {
+      display: none;
+    }
+
+    .job-card {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      margin-bottom: 15px;
+      border-left: 4px solid #3498db;
+    }
+
+    .job-card.done {
+      border-left-color: #2ecc71;
+    }
+
+    .job-card.error {
+      border-left-color: #e74c3c;
+    }
+
+    .job-card.cancelled {
+      border-left-color: #f39c12;
+    }
+
+    .job-card.queued {
+      border-left-color: #95a5a6;
+      opacity: 0.7;
+    }
+
+    .job-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .job-filename {
+      font-weight: 600;
+      color: #2c3e50;
+      font-size: 15px;
+      word-break: break-all;
+      flex: 1;
+      margin-right: 10px;
+    }
+
+    .job-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .job-actions button {
+      padding: 6px 12px;
+      font-size: 13px;
+    }
+
+    .stop-btn {
+      background: #e74c3c;
+      color: white;
+    }
+
+    .stop-btn:hover:not(:disabled) {
+      background: #c0392b;
+    }
+
+    .download-btn {
+      background: #2ecc71;
+      color: white;
+    }
+
+    .download-btn:hover {
+      background: #27ae60;
+    }
+
+    .progress-bar-outer {
+      background: #ecf0f1;
+      border-radius: 10px;
+      height: 20px;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+
+    .progress-bar-inner {
+      background: linear-gradient(90deg, #3498db, #2ecc71);
+      height: 100%;
+      width: 0%;
+      transition: width 0.3s ease;
+      border-radius: 10px;
+    }
+
+    .job-info {
+      display: flex;
+      justify-content: space-between;
+      color: #7f8c8d;
+      font-size: 13px;
+    }
+
+    .job-status {
+      font-weight: 500;
+    }
+
+    .job-usage {
+      margin-top: 10px;
+      padding: 10px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      font-size: 12px;
+      display: none;
+    }
+
+    .job-usage.show {
+      display: block;
+    }
+
+    .usage-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .usage-item {
+      text-align: center;
+    }
+
+    .usage-label {
+      color: #7f8c8d;
+      font-size: 11px;
+    }
+
+    .usage-value {
+      font-weight: 600;
+      color: #2c3e50;
+    }
+
+    .summary-bar {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+      display: none;
+    }
+
+    .summary-stats {
+      display: flex;
+      justify-content: space-around;
+      text-align: center;
+    }
+
+    .stat-item {
+      padding: 0 20px;
+    }
+
+    .stat-value {
+      font-size: 24px;
+      font-weight: 700;
+      color: #2c3e50;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: #7f8c8d;
+      margin-top: 4px;
+    }
+
+    .stat-value.success { color: #2ecc71; }
+    .stat-value.error { color: #e74c3c; }
+    .stat-value.processing { color: #3498db; }
+
+    .error-text {
+      color: #e74c3c;
+      font-size: 12px;
+      margin-top: 5px;
+    }
+  </style>
+</head>
+<body>
+  <h1>文件翻譯系統</h1>
+  <p class="subtitle">上傳 PDF 或 DOCX 文件，自動翻譯英文內容為繁體中文</p>
+
+  <div class="upload-area">
+    <div class="mode-selector" style="margin-bottom: 15px;">
+      <label style="display: inline-flex; align-items: center; margin-right: 20px; cursor: pointer;">
+        <input type="radio" name="mode" value="translate" checked style="margin-right: 6px;">
+        <span><strong>一般翻譯</strong> - PDF/DOCX 直接翻譯</span>
+      </label>
+      <label style="display: inline-flex; align-items: center; cursor: pointer;">
+        <input type="radio" name="mode" value="cb-to-cns" style="margin-right: 6px;">
+        <span><strong>CB → CNS</strong> - CB 報告轉 CNS 報告（僅 PDF）</span>
+      </label>
+    </div>
+    <div class="file-input-wrapper">
+      <input type="file" id="fileInput" accept=".pdf,.docx" multiple>
+      <button id="uploadBtn">上傳並翻譯</button>
+      <button id="stopAllBtn">全部停止</button>
+      <button id="downloadAllBtn">全部下載</button>
+    </div>
+    <p id="formatHint" style="color: #7f8c8d; font-size: 14px; margin: 0;">支援格式：PDF、DOCX（最大 50MB），可選擇多個檔案（依序處理）</p>
+  </div>
+
+  <div class="summary-bar" id="summaryBar">
+    <div class="summary-stats">
+      <div class="stat-item">
+        <div class="stat-value" id="totalCount">0</div>
+        <div class="stat-label">總檔案</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value processing" id="processingCount">0</div>
+        <div class="stat-label">處理中</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value success" id="successCount">0</div>
+        <div class="stat-label">完成</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value error" id="errorCount">0</div>
+        <div class="stat-label">失敗</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value" id="totalCost">$0.00</div>
+        <div class="stat-label">總費用 (USD)</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="jobs-container" id="jobsContainer"></div>
+
+  <script>
+    const fileInput = document.getElementById('fileInput');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const stopAllBtn = document.getElementById('stopAllBtn');
+    const downloadAllBtn = document.getElementById('downloadAllBtn');
+    const jobsContainer = document.getElementById('jobsContainer');
+    const summaryBar = document.getElementById('summaryBar');
+    const formatHint = document.getElementById('formatHint');
+    const modeRadios = document.querySelectorAll('input[name="mode"]');
+
+    // Track all jobs
+    const jobs = new Map(); // jobId -> { file, status, element }
+    let pollingInterval = null;
+    let fileQueue = []; // Queue for sequential processing
+    let isProcessing = false;
+
+    // Get current mode
+    function getCurrentMode() {
+      const selected = document.querySelector('input[name="mode"]:checked');
+      return selected ? selected.value : 'translate';
+    }
+
+    // Update file input based on mode
+    function updateFileInputForMode() {
+      const mode = getCurrentMode();
+      if (mode === 'cb-to-cns') {
+        fileInput.accept = '.pdf';
+        formatHint.textContent = '支援格式：PDF（最大 50MB）- CB 報告將被分析並轉換為 CNS 報告結構';
+      } else {
+        fileInput.accept = '.pdf,.docx';
+        formatHint.textContent = '支援格式：PDF、DOCX（最大 50MB），可選擇多個檔案（依序處理）';
+      }
+      // Clear file input when mode changes
+      fileInput.value = '';
+    }
+
+    // Listen for mode changes
+    modeRadios.forEach(radio => {
+      radio.addEventListener('change', updateFileInputForMode);
+    });
+
+    // Status message mapping
+    const statusMessages = {
+      'queued': '排隊中',
+      'uploading': '上傳中',
+      'converting': 'PDF 轉換中',
+      'parsing-docx': '解析文件中',
+      'translating': '翻譯中',
+      'qa-check': 'QA 檢查中',
+      'retranslating': '重新翻譯中',
+      'packing': '打包中',
+      'done': '完成',
+      'error': '錯誤',
+      'cancelled': '已取消'
+    };
+
+    uploadBtn.addEventListener('click', async () => {
+      const files = fileInput.files;
+      if (!files || files.length === 0) {
+        alert('請先選擇檔案');
+        return;
+      }
+
+      const mode = getCurrentMode();
+
+      // Validate files for CB→CNS mode (PDF only)
+      if (mode === 'cb-to-cns') {
+        for (const file of files) {
+          if (!file.name.toLowerCase().endsWith('.pdf')) {
+            alert('CB → CNS 模式只支援 PDF 檔案');
+            return;
+          }
+        }
+      }
+
+      // Show containers
+      jobsContainer.style.display = 'block';
+      summaryBar.style.display = 'block';
+      stopAllBtn.style.display = 'inline-block';
+
+      // Add files to queue and create cards
+      for (const file of files) {
+        const tempId = 'queued-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+        const card = createJobCard(tempId, file.name, mode);
+        jobsContainer.appendChild(card);
+
+        jobs.set(tempId, {
+          file: file,
+          status: 'queued',
+          element: card,
+          fileName: file.name,
+          mode: mode  // Save mode for this job
+        });
+
+        fileQueue.push({ file, tempId, card });
+        const queueMsg = mode === 'cb-to-cns' ? '排隊中（CB→CNS）...' : '排隊中...';
+        updateJobCard(tempId, { status: 'queued', stepMessage: queueMsg });
+      }
+
+      updateSummary();
+
+      // Start processing queue if not already running
+      if (!isProcessing) {
+        processQueue();
+      }
+
+      // Start polling
+      if (!pollingInterval) {
+        startPolling();
+      }
+
+      // Clear file input for next batch
+      fileInput.value = '';
+    });
+
+    stopAllBtn.addEventListener('click', async () => {
+      // Clear the queue
+      for (const item of fileQueue) {
+        const job = jobs.get(item.tempId);
+        if (job && job.status === 'queued') {
+          job.status = 'cancelled';
+          updateJobCard(item.tempId, { status: 'cancelled', stepMessage: '已取消' });
+        }
+      }
+      fileQueue = [];
+
+      // Stop active jobs
+      for (const [jobId, job] of jobs) {
+        if (!['done', 'error', 'cancelled', 'queued'].includes(job.status)) {
+          try {
+            await fetch(`/api/stop/${jobId}`, { method: 'POST' });
+          } catch (e) {
+            console.error('Failed to stop job:', jobId, e);
+          }
+        }
+      }
+      updateSummary();
+    });
+
+    downloadAllBtn.addEventListener('click', () => {
+      const completedJobs = Array.from(jobs.entries())
+        .filter(([_, job]) => job.status === 'done' && job.downloadable);
+
+      // Download each file with small delay to avoid browser blocking
+      completedJobs.forEach(([jobId, _], index) => {
+        setTimeout(() => {
+          const link = document.createElement('a');
+          link.href = `/api/download/${jobId}`;
+          link.download = '';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }, index * 500);
+      });
+    });
+
+    // Process queue one file at a time
+    async function processQueue() {
+      if (isProcessing || fileQueue.length === 0) {
+        return;
+      }
+
+      isProcessing = true;
+      uploadBtn.disabled = true;
+
+      while (fileQueue.length > 0) {
+        const { file, tempId, card } = fileQueue.shift();
+        const job = jobs.get(tempId);
+
+        // Skip if cancelled
+        if (!job || job.status === 'cancelled') {
+          continue;
+        }
+
+        // Upload and wait for completion
+        await uploadFileAndWait(file, tempId, card, job.mode);
+      }
+
+      isProcessing = false;
+      checkAllDone();
+    }
+
+    // Upload a single file and wait for it to complete
+    function uploadFileAndWait(file, tempId, card, mode) {
+      return new Promise((resolve) => {
+        const job = jobs.get(tempId);
+        job.status = 'uploading';
+        const uploadMsg = mode === 'cb-to-cns' ? '上傳中（CB→CNS）...' : '上傳中...';
+        updateJobCard(tempId, { stepMessage: uploadMsg });
+        updateSummary();
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const xhr = new XMLHttpRequest();
+        let realJobId = null;
+
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const percent = Math.round((e.loaded / e.total) * 10);
+            updateJobCard(tempId, { progress: percent, stepMessage: uploadMsg });
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status === 200) {
+            const response = JSON.parse(xhr.responseText);
+            realJobId = response.jobId;
+
+            // Transfer job from temp ID to real ID
+            const job = jobs.get(tempId);
+            jobs.delete(tempId);
+            job.status = 'processing';
+            job.realJobId = realJobId;
+            jobs.set(realJobId, job);
+
+            // Update card's data-job-id
+            card.dataset.jobId = realJobId;
+            card.querySelector('.stop-btn').onclick = () => stopJob(realJobId);
+
+            updateSummary();
+
+            // Poll until this job is done
+            waitForJobCompletion(realJobId).then(resolve);
+          } else {
+            job.status = 'error';
+            updateJobCard(tempId, {
+              status: 'error',
+              errorMessage: '上傳失敗：' + xhr.statusText
+            });
+            updateSummary();
+            resolve();
+          }
+        };
+
+        xhr.onerror = () => {
+          job.status = 'error';
+          updateJobCard(tempId, {
+            status: 'error',
+            errorMessage: '網路錯誤'
+          });
+          updateSummary();
+          resolve();
+        };
+
+        // Add mode as query parameter
+        xhr.open('POST', `/api/upload?mode=${encodeURIComponent(mode)}`);
+        xhr.send(formData);
+      });
+    }
+
+    // Wait for a specific job to complete
+    function waitForJobCompletion(jobId) {
+      return new Promise((resolve) => {
+        const checkInterval = setInterval(async () => {
+          try {
+            const response = await fetch(`/api/status/${jobId}`);
+            const status = await response.json();
+
+            updateJobCard(jobId, {
+              progress: status.progress,
+              stepMessage: status.stepMessage || statusMessages[status.status],
+              elapsedSeconds: status.elapsedSeconds,
+              status: status.status,
+              errorMessage: status.errorMessage,
+              downloadable: status.downloadable,
+              usage: status.usage,
+              costUSD: status.costUSD
+            });
+
+            updateSummary();
+
+            if (['done', 'error', 'cancelled'].includes(status.status)) {
+              clearInterval(checkInterval);
+              resolve();
+            }
+          } catch (e) {
+            console.error('Poll error:', e);
+          }
+        }, 1000);
+      });
+    }
+
+    function createJobCard(jobId, fileName, mode = 'translate') {
+      const card = document.createElement('div');
+      card.className = 'job-card';
+      card.dataset.jobId = jobId;
+      const modeLabel = mode === 'cb-to-cns'
+        ? '<span style="background:#9b59b6;color:white;padding:2px 6px;border-radius:4px;font-size:11px;margin-left:8px;">CB→CNS</span>'
+        : '';
+      card.innerHTML = `
+        <div class="job-header">
+          <span class="job-filename">${escapeHtml(fileName)}${modeLabel}</span>
+          <div class="job-actions">
+            <button class="stop-btn" onclick="stopJob('${jobId}')">停止</button>
+            <a class="download-btn" style="display:none; text-decoration:none; padding:6px 12px;">下載</a>
+          </div>
+        </div>
+        <div class="progress-bar-outer">
+          <div class="progress-bar-inner"></div>
+        </div>
+        <div class="job-info">
+          <span class="job-status">準備中...</span>
+          <span class="job-time">0 秒</span>
+        </div>
+        <div class="error-text" style="display:none;"></div>
+        <div class="job-usage">
+          <div class="usage-grid">
+            <div class="usage-item">
+              <div class="usage-label">Prompt</div>
+              <div class="usage-value prompt-tokens">0</div>
+            </div>
+            <div class="usage-item">
+              <div class="usage-label">Completion</div>
+              <div class="usage-value completion-tokens">0</div>
+            </div>
+            <div class="usage-item">
+              <div class="usage-label">費用</div>
+              <div class="usage-value cost">$0.00</div>
+            </div>
+          </div>
+        </div>
+      `;
+      return card;
+    }
+
+    function updateJobCard(jobId, data) {
+      const job = jobs.get(jobId);
+      if (!job || !job.element) return;
+
+      const card = job.element;
+
+      if (data.progress !== undefined) {
+        card.querySelector('.progress-bar-inner').style.width = data.progress + '%';
+      }
+
+      if (data.stepMessage) {
+        card.querySelector('.job-status').textContent = data.stepMessage;
+      }
+
+      if (data.elapsedSeconds !== undefined) {
+        card.querySelector('.job-time').textContent = data.elapsedSeconds + ' 秒';
+      }
+
+      if (data.status) {
+        const statusClass = data.status === 'done' ? 'done'
+          : data.status === 'error' ? 'error'
+          : data.status === 'cancelled' ? 'cancelled'
+          : data.status === 'queued' ? 'queued'
+          : '';
+        card.className = 'job-card ' + statusClass;
+
+        if (['done', 'error', 'cancelled'].includes(data.status)) {
+          card.querySelector('.stop-btn').style.display = 'none';
+        }
+
+        if (data.status === 'done' && data.downloadable) {
+          const downloadBtn = card.querySelector('.download-btn');
+          downloadBtn.style.display = 'inline-block';
+          downloadBtn.href = `/api/download/${jobId}`;
+          job.downloadable = true;
+        }
+
+        if (data.status === 'error' && data.errorMessage) {
+          const errorText = card.querySelector('.error-text');
+          errorText.textContent = data.errorMessage;
+          errorText.style.display = 'block';
+        }
+
+        job.status = data.status;
+      }
+
+      if (data.usage) {
+        const usageDiv = card.querySelector('.job-usage');
+        usageDiv.classList.add('show');
+        usageDiv.querySelector('.prompt-tokens').textContent = data.usage.prompt.toLocaleString();
+        usageDiv.querySelector('.completion-tokens').textContent = data.usage.completion.toLocaleString();
+        job.usage = data.usage;
+      }
+
+      if (data.costUSD !== undefined) {
+        card.querySelector('.cost').textContent = '$' + data.costUSD.toFixed(4);
+        job.costUSD = data.costUSD;
+      }
+    }
+
+    async function stopJob(jobId) {
+      try {
+        await fetch(`/api/stop/${jobId}`, { method: 'POST' });
+      } catch (e) {
+        console.error('Failed to stop job:', jobId, e);
+      }
+    }
+
+    function startPolling() {
+      // Polling is now handled per-job in waitForJobCompletion
+      // This function is kept for compatibility but does minimal work
+      pollingInterval = setInterval(() => {
+        updateSummary();
+        checkAllDone();
+      }, 2000);
+    }
+
+    function checkAllDone() {
+      const activeJobs = Array.from(jobs.values())
+        .filter(job => !['done', 'error', 'cancelled'].includes(job.status));
+
+      if (activeJobs.length === 0 && jobs.size > 0 && !isProcessing) {
+        uploadBtn.disabled = false;
+        stopAllBtn.style.display = 'none';
+
+        // Show download all button if there are completed files
+        const completedCount = Array.from(jobs.values())
+          .filter(job => job.status === 'done' && job.downloadable).length;
+
+        if (completedCount > 1) {
+          downloadAllBtn.style.display = 'inline-block';
+        }
+      }
+    }
+
+    function updateSummary() {
+      const allJobs = Array.from(jobs.values());
+      const total = allJobs.length;
+      const queued = allJobs.filter(j => j.status === 'queued').length;
+      const processing = allJobs.filter(j => !['done', 'error', 'cancelled', 'queued'].includes(j.status)).length;
+      const success = allJobs.filter(j => j.status === 'done').length;
+      const errors = allJobs.filter(j => j.status === 'error' || j.status === 'cancelled').length;
+      const totalCost = allJobs.reduce((sum, j) => sum + (j.costUSD || 0), 0);
+
+      document.getElementById('totalCount').textContent = total;
+      document.getElementById('processingCount').textContent = processing + (queued > 0 ? ` (+${queued})` : '');
+      document.getElementById('successCount').textContent = success;
+      document.getElementById('errorCount').textContent = errors;
+      document.getElementById('totalCost').textContent = '$' + totalCost.toFixed(4);
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Expose stopJob to global scope for onclick
+    window.stopJob = stopJob;
+  </script>
+</body>
+</html>

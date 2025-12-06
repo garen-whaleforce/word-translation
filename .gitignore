@@ -8,6 +8,11 @@ venv/
 env/
 .venv/
 
+# Node.js
+node_modules/
+dist/
+*.tsbuildinfo
+
 # Environment
 .env
 .env.local
@@ -25,10 +30,14 @@ Thumbs.db
 # Temporary files
 /tmp/
 *.tmp
+uploads/
+work/
+output/
+backup-*/
 
 # Logs
 *.log
 
-# Test files
-*.pdf
-*.docx
+# Test files (keep in repo for testing)
+# *.pdf
+# *.docx
