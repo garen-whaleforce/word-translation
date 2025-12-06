@@ -487,6 +487,32 @@ h1 {
 
 .result-item-actions {
     margin-left: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.debug-buttons {
+    display: flex;
+    gap: 4px;
+}
+
+.btn-debug {
+    display: inline-block;
+    padding: 6px 10px;
+    background: #f1f5f9;
+    color: #64748b;
+    text-decoration: none;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    border: 1px solid #e2e8f0;
+}
+
+.btn-debug:hover {
+    background: #e2e8f0;
+    color: #475569;
 }
 
 .btn-download-small {

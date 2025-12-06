@@ -6,6 +6,7 @@ and writes the result to a new document.
 
 import asyncio
 import os
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional, Awaitable, Union, Tuple
@@ -13,6 +14,7 @@ from typing import Callable, Optional, Awaitable, Union, Tuple
 from docx import Document
 from docx.table import Table
 from docx.text.paragraph import Paragraph
+from docx.oxml.ns import qn
 from openai import AsyncOpenAI, AsyncAzureOpenAI, APIError, RateLimitError
 
 # Type alias for the client (can be either OpenAI or Azure OpenAI)
@@ -28,6 +30,9 @@ class ElementType(Enum):
     """Type of document element."""
     PARAGRAPH = "paragraph"
     TABLE_CELL = "table_cell"
+    HEADER = "header"
+    FOOTER = "footer"
+    TEXT_BOX = "text_box"
 
 
 @dataclass
@@ -39,6 +44,11 @@ class TextElement:
     row_index: Optional[int] = None
     cell_index: Optional[int] = None
     cell_paragraph_index: Optional[int] = None
+    section_index: Optional[int] = None  # For headers/footers
+    header_type: Optional[str] = None  # 'default', 'first', 'even'
+    textbox_index: Optional[int] = None  # For text boxes
+    textbox_para_index: Optional[int] = None  # Paragraph index within text box
+    xml_element: Optional[object] = None  # Store XML element reference for text boxes
     original_text: str = ""
     translated_text: str = ""
 
@@ -63,68 +73,94 @@ class TranslationStats:
 
 
 # System prompt for translation
-SYSTEM_PROMPT = """You are a professional technical document translator specializing in translating electrical safety certification (CB) test reports from English to Traditional Chinese (Taiwan).
+SYSTEM_PROMPT = """You are a senior bilingual technical translator. Your ONLY task is to translate from **English to Traditional Chinese (Taiwan)**.
 
-Rules you must follow:
-1. Translate the given text from English to Traditional Chinese accurately and naturally.
-2. Do NOT summarize, omit, or add any content. Translate everything faithfully.
-3. Preserve all numbers, units, proper nouns, technical terms, and formatting markers (such as headings, bullet points, etc.).
-4. Maintain the original paragraph structure and line breaks.
-5. Do NOT add any notes, explanations, or comments. Output ONLY the translated text.
-6. If the input contains multiple paragraphs separated by special markers like "|||", preserve these markers in your output.
-7. If text appears to be a heading or title, keep it as a heading in Traditional Chinese.
-8. For technical terms that are commonly kept in English (like API, HTTP, etc.), you may keep them in English.
+The documents are CB / IEC safety test reports and power electronics specifications. Your translation MUST sound like it was written by an experienced compliance engineer familiar with IEC/EN standards and safety reports used in Taiwan.
 
-IMPORTANT - Industry-specific terminology (MUST follow these translations):
+### Core rules
+1. **Direction:** Always translate **from English to Traditional Chinese**. Never translate Chinese back to English.
+2. **Style:**
+   - Use formal, concise wording suitable for test reports, specifications, and certification documents.
+   - Use clear engineering wording, not marketing language.
+   - Keep sentence structure close to the source when it improves traceability in audits or cross-checking.
+3. **Formatting & layout:**
+   - Preserve tables, item numbers, headings, clause numbers, units, symbols, and values.
+   - Do NOT change numbers, limits, dates, test results, verdicts, or standard identifiers.
+   - Keep IEC / EN / UL standard codes (e.g., "IEC 62368-1") in English.
+   - If the input contains multiple paragraphs separated by special markers like "|||", preserve these markers in your output.
 
-Circuit/Winding Terms:
-- "primary" / "primary circuit" / "primary winding" / "primary side" → 一次側 (NOT 初級/一次測)
-- "secondary" / "secondary circuit" / "secondary winding" / "Sec." → 二次側 (NOT 次級/二次測)
-- "primary wire" → 一次側引線
-- "winding" → 繞線
-- "core" (transformer/magnetic) → 鐵芯 (NOT 核心)
-- "trace" (PCB) → 銅箔
+4. **What must remain in English:**
+   - Standard names and numbers (IEC/EN/UL/CSA, etc.).
+   - Trade names, model names, company names, PCB designators (R1, C2, T1, etc.).
+   - Keep abbreviations like "CB", "ICT", "AV" if they are part of standard terminology in the report.
 
-Component Terms:
-- "fuse" → 保險絲 (NOT 熔絲)
-- "varistor" / "MOV" → 突波吸收器 (NOT 壓敏電阻)
-- "bleeding resistor" → 洩放電阻
-- "current limit resistor" → 限流電阻
-- "electrolytic capacitor" → 電解電容
-- "MOSFET" → 電晶體
-- "line choke" → 電感
-- "bobbin" → 線架
-- "triple insulated wire" → 三層絕緣線 (NOT 三重絕緣線)
-- "AC connector" → AC連接器
+5. **Do NOT leave English untranslated**
+   - Except for items listed above, **everything else must be translated into Traditional Chinese**.
+   - If you must keep a term in English for technical accuracy, add a clear Traditional Chinese explanation on first occurrence.
 
-Plug/Enclosure Terms:
-- "plug holder" / "blade holder" / "插頭座" / "針套材料" → 刃片插座塑膠材質 / AC刃片插座塑膠材質
-- "plug" / "blade" (electrical) → 刀刃座 (NOT 插座頭)
-- "plastic enclosure outside near" → 塑膠外殼內側靠近
+### Terminology – MANDATORY glossary (English ➜ Traditional Chinese)
+When these English terms or phrases appear, you MUST use EXACTLY the following translations.
+Always match the **longest phrase first** (e.g., match "primary winding" before the single word "primary").
 
-Test/Measurement Terms:
-- "ambient" (temperature/condition) → 室溫 (NOT 環境)
-- "unit shutdown immediately" → 設備立即中斷
-- "unit shutdown" → 設備中斷
-- "for model" → 適用型號
+Parts / components:
+- Bleeding resistor ➜ 洩放電阻
+- Electrolytic capacitor ➜ 電解電容
+- MOSFET ➜ 電晶體
+- Current limit resistor ➜ 限流電阻
+- Varistor / MOV ➜ 突波吸收器
+- Primary wire ➜ 一次側引線
+- Line choke / Line chock ➜ 電感
+- Bobbin ➜ 線架
+- Plug holder ➜ 刃片插座塑膠材質
+- AC connector ➜ AC 連接器
+- Fuse ➜ 保險絲
+- Triple insulated wire ➜ 三層絕緣線
+- Trace (PCB) ➜ 銅箔
 
-General Terms:
-- "interchangeable" → 不限 (NOT 可互換)
-- "minimum" / "at least" → 至少 (NOT 最小/最低)
-- "optional" → 可選
+Circuit sides & windings:
+- primary winding ➜ 一次側繞線
+- primary circuit ➜ 一次側電路
+- primary (alone, referring to primary side) ➜ 一次側
+- secondary ➜ 二次側
+- Sec. (abbreviation) ➜ 二次側
+- winding (general) ➜ 繞線
+- core (magnetic core) ➜ 鐵芯
 
-IMPORTANT - Table cell formatting rules:
+Test conditions, environment, status:
+- Unit shutdown immediately ➜ 設備立即中斷
+- Unit shutdown ➜ 設備中斷
+- Ambient (temperature, condition) ➜ 室溫
+- Plastic enclosure outside near ➜ 塑膠外殼內側靠近
+- For model ➜ 適用型號
+- Optional ➜ 可選
+- Interchangeable ➜ 不限
+- Minimum / at least ➜ 至少
+
+Additional wording constraints:
+- NEVER translate "primary" as "初級" or "一次測" or "一次"; always use **一次側**.
+- NEVER translate "secondary" as "次級"; always use **二次側**.
+- Use **Traditional Chinese** characters only.
+
+### Table cell formatting rules
 - Flammability rating cells: When you see "UL 94, UL 746C" or similar, output ONLY "UL 94" (remove UL 746C)
 - Empty or blank cells: Keep them empty/blank, do NOT add any content
 - Certification/approval cells with file numbers: Remove file numbers, keep ONLY the certification standard names
   Example: "VDE↓40029550↓UL E249609" → "VDE" (remove all file numbers like 40029550, E249609, E121562, etc.)
-  Example: "UL 94, UL 746C↓UL E121562" → "UL 94" (keep only the flammability standard)"""
+
+### Quality checks
+Before finalizing each answer, mentally check:
+1. All English technical content (except standard names, model names, etc.) has been translated into Traditional Chinese.
+2. All glossary terms above are applied consistently, prioritizing the longest phrase match.
+3. Numbers, units, limits, clause numbers, table structures, and verdicts are preserved exactly.
+4. The overall tone is that of a professional safety/compliance report used in Taiwan.
+
+Output ONLY the translated Traditional Chinese text (with the preserved structure), without explanations."""
 
 
-CHUNK_SIZE = 2000  # characters per chunk (increased for efficiency)
+CHUNK_SIZE = 1500  # characters per chunk
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds
-MAX_CONCURRENT_CHUNKS = 15  # max concurrent API calls per file
+MAX_CONCURRENT_CHUNKS = 20  # max concurrent API calls per file
 MAX_CONCURRENT_FILES = 2  # max concurrent file translations
 
 # Global semaphore for file-level concurrency control
@@ -303,6 +339,26 @@ async def translate_text_chunk(
     )
 
 
+def _get_all_tables(doc: Document) -> list[Table]:
+    """
+    Recursively get all tables including nested tables from the document.
+    """
+    tables = []
+
+    def add_tables_from_element(element):
+        """Recursively find tables in an element."""
+        if hasattr(element, 'tables'):
+            for table in element.tables:
+                tables.append(table)
+                # Check for nested tables in cells
+                for row in table.rows:
+                    for cell in row.cells:
+                        add_tables_from_element(cell)
+
+    add_tables_from_element(doc)
+    return tables
+
+
 def extract_text_elements(doc: Document) -> list[TextElement]:
     """
     Extract all text elements from a Word document.
@@ -314,6 +370,7 @@ def extract_text_elements(doc: Document) -> list[TextElement]:
         A list of TextElement objects with location and text information.
     """
     elements: list[TextElement] = []
+    processed_cells = set()  # Track processed cells to avoid duplicates
 
     # Extract paragraphs (not in tables)
     for para_idx, paragraph in enumerate(doc.paragraphs):
@@ -325,10 +382,18 @@ def extract_text_elements(doc: Document) -> list[TextElement]:
                 original_text=text
             ))
 
-    # Extract table cells
-    for table_idx, table in enumerate(doc.tables):
+    # Extract table cells - get all tables including nested ones
+    all_tables = _get_all_tables(doc)
+
+    for table_idx, table in enumerate(all_tables):
         for row_idx, row in enumerate(table.rows):
             for cell_idx, cell in enumerate(row.cells):
+                # Skip duplicate cells (merged cells return same object)
+                cell_id = id(cell)
+                if cell_id in processed_cells:
+                    continue
+                processed_cells.add(cell_id)
+
                 for para_idx, paragraph in enumerate(cell.paragraphs):
                     text = paragraph.text.strip()
                     if text:
@@ -340,6 +405,80 @@ def extract_text_elements(doc: Document) -> list[TextElement]:
                             cell_paragraph_index=para_idx,
                             original_text=text
                         ))
+
+    # Extract headers and footers from all sections
+    for section_idx, section in enumerate(doc.sections):
+        # Header types: default, first_page, even_page
+        header_types = [
+            ('default', section.header),
+            ('first', section.first_page_header),
+            ('even', section.even_page_header),
+        ]
+        for header_type, header in header_types:
+            if header and header.is_linked_to_previous is False:
+                for para_idx, paragraph in enumerate(header.paragraphs):
+                    text = paragraph.text.strip()
+                    if text:
+                        elements.append(TextElement(
+                            element_type=ElementType.HEADER,
+                            section_index=section_idx,
+                            header_type=header_type,
+                            paragraph_index=para_idx,
+                            original_text=text
+                        ))
+
+        # Footer types: default, first_page, even_page
+        footer_types = [
+            ('default', section.footer),
+            ('first', section.first_page_footer),
+            ('even', section.even_page_footer),
+        ]
+        for footer_type, footer in footer_types:
+            if footer and footer.is_linked_to_previous is False:
+                for para_idx, paragraph in enumerate(footer.paragraphs):
+                    text = paragraph.text.strip()
+                    if text:
+                        elements.append(TextElement(
+                            element_type=ElementType.FOOTER,
+                            section_index=section_idx,
+                            header_type=footer_type,
+                            paragraph_index=para_idx,
+                            original_text=text
+                        ))
+
+    # Extract text from text boxes (w:txbxContent elements)
+    # These are often used in PDF conversions for floating text
+    try:
+        # Use lxml etree for xpath with namespaces
+        nsmap = {
+            'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
+        }
+
+        # Find all text box content elements in the document body
+        body_xml = doc.element.body
+        textbox_contents = body_xml.findall('.//' + qn('w:txbxContent'))
+
+        for tb_idx, txbx_content in enumerate(textbox_contents):
+            # Find all paragraph elements within the text box
+            para_elements = txbx_content.findall('.//' + qn('w:p'))
+
+            for para_idx, para_elem in enumerate(para_elements):
+                # Get all text from this paragraph
+                text_elements = para_elem.findall('.//' + qn('w:t'))
+                text_parts = [t.text for t in text_elements if t.text]
+                text = ''.join(text_parts).strip()
+
+                if text:
+                    elements.append(TextElement(
+                        element_type=ElementType.TEXT_BOX,
+                        textbox_index=tb_idx,
+                        textbox_para_index=para_idx,
+                        xml_element=para_elem,
+                        original_text=text
+                    ))
+    except Exception as e:
+        # If text box extraction fails, continue without it
+        pass
 
     return elements
 
@@ -458,6 +597,151 @@ async def translate_elements(
     await asyncio.gather(*[process_chunk(chunk) for chunk in chunks])
 
 
+# Pattern to match sequences of dots (3 or more dots, with optional spaces and colons)
+DOTS_PATTERN = re.compile(r'[.\u2026]{3,}[\s:：]*')
+
+# Pattern to detect significant English text (ignoring standard codes, numbers, etc.)
+# This matches English words that are likely to need translation
+ENGLISH_WORD_PATTERN = re.compile(r'[A-Za-z]{4,}')
+
+# Words/patterns to exclude from English detection (standards, abbreviations, etc.)
+ENGLISH_EXCLUSIONS = {
+    'iec', 'en', 'ul', 'csa', 'vde', 'tuv', 'cb', 'ict', 'mosfet', 'pcb',
+    'ac', 'dc', 'led', 'usb', 'hdmi', 'wifi', 'http', 'https', 'api',
+    'pass', 'fail', 'n/a', 'max', 'min', 'typ', 'nom', 'ref', 'see',
+    'table', 'figure', 'note', 'page', 'item', 'model', 'type', 'class',
+}
+
+
+def _contains_significant_english(text: str) -> bool:
+    """
+    Check if text contains significant English words that should be translated.
+    Returns True if the text has English words that are likely untranslated content.
+    """
+    # Find all English words (4+ letters)
+    words = ENGLISH_WORD_PATTERN.findall(text.lower())
+
+    # Filter out excluded words
+    significant_words = [w for w in words if w not in ENGLISH_EXCLUSIONS]
+
+    # If there are significant English words, text likely needs translation
+    return len(significant_words) > 0
+
+
+def find_untranslated_elements(doc: Document) -> list[TextElement]:
+    """
+    Scan the document to find elements with remaining English text.
+    Returns a list of TextElement objects that need translation.
+    """
+    elements: list[TextElement] = []
+    processed_cells = set()
+
+    # Check paragraphs
+    for para_idx, paragraph in enumerate(doc.paragraphs):
+        text = paragraph.text.strip()
+        if text and _contains_significant_english(text):
+            elements.append(TextElement(
+                element_type=ElementType.PARAGRAPH,
+                paragraph_index=para_idx,
+                original_text=text
+            ))
+
+    # Check table cells
+    all_tables = _get_all_tables(doc)
+    for table_idx, table in enumerate(all_tables):
+        for row_idx, row in enumerate(table.rows):
+            for cell_idx, cell in enumerate(row.cells):
+                cell_id = id(cell)
+                if cell_id in processed_cells:
+                    continue
+                processed_cells.add(cell_id)
+
+                for para_idx, paragraph in enumerate(cell.paragraphs):
+                    text = paragraph.text.strip()
+                    if text and _contains_significant_english(text):
+                        elements.append(TextElement(
+                            element_type=ElementType.TABLE_CELL,
+                            table_index=table_idx,
+                            row_index=row_idx,
+                            cell_index=cell_idx,
+                            cell_paragraph_index=para_idx,
+                            original_text=text
+                        ))
+
+    # Check headers and footers
+    for section_idx, section in enumerate(doc.sections):
+        for header_type, header in [('default', section.header), ('first', section.first_page_header), ('even', section.even_page_header)]:
+            if header and header.is_linked_to_previous is False:
+                for para_idx, paragraph in enumerate(header.paragraphs):
+                    text = paragraph.text.strip()
+                    if text and _contains_significant_english(text):
+                        elements.append(TextElement(
+                            element_type=ElementType.HEADER,
+                            section_index=section_idx,
+                            header_type=header_type,
+                            paragraph_index=para_idx,
+                            original_text=text
+                        ))
+
+        for footer_type, footer in [('default', section.footer), ('first', section.first_page_footer), ('even', section.even_page_footer)]:
+            if footer and footer.is_linked_to_previous is False:
+                for para_idx, paragraph in enumerate(footer.paragraphs):
+                    text = paragraph.text.strip()
+                    if text and _contains_significant_english(text):
+                        elements.append(TextElement(
+                            element_type=ElementType.FOOTER,
+                            section_index=section_idx,
+                            header_type=footer_type,
+                            paragraph_index=para_idx,
+                            original_text=text
+                        ))
+
+    # Check text boxes
+    try:
+        body_xml = doc.element.body
+        textbox_contents = body_xml.findall('.//' + qn('w:txbxContent'))
+        for tb_idx, txbx_content in enumerate(textbox_contents):
+            para_elements = txbx_content.findall('.//' + qn('w:p'))
+            for para_idx, para_elem in enumerate(para_elements):
+                text_elements = para_elem.findall('.//' + qn('w:t'))
+                text_parts = [t.text for t in text_elements if t.text]
+                text = ''.join(text_parts).strip()
+                if text and _contains_significant_english(text):
+                    elements.append(TextElement(
+                        element_type=ElementType.TEXT_BOX,
+                        textbox_index=tb_idx,
+                        textbox_para_index=para_idx,
+                        xml_element=para_elem,
+                        original_text=text
+                    ))
+    except Exception:
+        pass
+
+    return elements
+
+
+def _clean_text(text: str) -> str:
+    """Clean up text by removing dot sequences and extra whitespace."""
+    # Remove dot sequences (like "......" or "…………")
+    cleaned = DOTS_PATTERN.sub('', text)
+    # Clean up extra whitespace
+    cleaned = ' '.join(cleaned.split())
+    return cleaned.strip()
+
+
+def _update_paragraph_text(paragraph, text: str) -> None:
+    """Helper to update paragraph text while preserving formatting."""
+    # Clean the text before writing
+    cleaned_text = _clean_text(text)
+    if paragraph.runs:
+        first_run = paragraph.runs[0]
+        for run in paragraph.runs[1:]:
+            run.text = ""
+        first_run.text = cleaned_text
+    else:
+        paragraph.text = cleaned_text
+
+
 def write_translations_to_doc(doc: Document, elements: list[TextElement]) -> None:
     """
     Write translated text back to the document.
@@ -466,6 +750,9 @@ def write_translations_to_doc(doc: Document, elements: list[TextElement]) -> Non
         doc: The python-docx Document object.
         elements: List of TextElement objects with translations.
     """
+    # Get all tables (same order as extraction)
+    all_tables = _get_all_tables(doc)
+
     for element in elements:
         if not element.translated_text:
             continue
@@ -473,15 +760,7 @@ def write_translations_to_doc(doc: Document, elements: list[TextElement]) -> Non
         if element.element_type == ElementType.PARAGRAPH:
             if element.paragraph_index is not None:
                 paragraph = doc.paragraphs[element.paragraph_index]
-                # Preserve runs structure but replace text
-                if paragraph.runs:
-                    # Clear all runs except first, put all text in first run
-                    first_run = paragraph.runs[0]
-                    for run in paragraph.runs[1:]:
-                        run.text = ""
-                    first_run.text = element.translated_text
-                else:
-                    paragraph.text = element.translated_text
+                _update_paragraph_text(paragraph, element.translated_text)
 
         elif element.element_type == ElementType.TABLE_CELL:
             if (element.table_index is not None and
@@ -489,34 +768,78 @@ def write_translations_to_doc(doc: Document, elements: list[TextElement]) -> Non
                 element.cell_index is not None and
                 element.cell_paragraph_index is not None):
 
-                table = doc.tables[element.table_index]
+                table = all_tables[element.table_index]
                 cell = table.rows[element.row_index].cells[element.cell_index]
                 paragraph = cell.paragraphs[element.cell_paragraph_index]
+                _update_paragraph_text(paragraph, element.translated_text)
 
-                if paragraph.runs:
-                    first_run = paragraph.runs[0]
-                    for run in paragraph.runs[1:]:
-                        run.text = ""
-                    first_run.text = element.translated_text
+        elif element.element_type == ElementType.HEADER:
+            if (element.section_index is not None and
+                element.header_type is not None and
+                element.paragraph_index is not None):
+
+                section = doc.sections[element.section_index]
+                if element.header_type == 'default':
+                    header = section.header
+                elif element.header_type == 'first':
+                    header = section.first_page_header
                 else:
-                    paragraph.text = element.translated_text
+                    header = section.even_page_header
+
+                if header and element.paragraph_index < len(header.paragraphs):
+                    paragraph = header.paragraphs[element.paragraph_index]
+                    _update_paragraph_text(paragraph, element.translated_text)
+
+        elif element.element_type == ElementType.FOOTER:
+            if (element.section_index is not None and
+                element.header_type is not None and
+                element.paragraph_index is not None):
+
+                section = doc.sections[element.section_index]
+                if element.header_type == 'default':
+                    footer = section.footer
+                elif element.header_type == 'first':
+                    footer = section.first_page_footer
+                else:
+                    footer = section.even_page_footer
+
+                if footer and element.paragraph_index < len(footer.paragraphs):
+                    paragraph = footer.paragraphs[element.paragraph_index]
+                    _update_paragraph_text(paragraph, element.translated_text)
+
+        elif element.element_type == ElementType.TEXT_BOX:
+            # Update text box content directly via XML
+            if element.xml_element is not None:
+                cleaned_text = _clean_text(element.translated_text)
+
+                # Find all text elements in this paragraph and update them
+                text_elements = element.xml_element.findall('.//' + qn('w:t'))
+                if text_elements:
+                    # Clear all text elements except the first one
+                    for t_elem in text_elements[1:]:
+                        t_elem.text = ""
+                    # Set the first text element to the translated text
+                    text_elements[0].text = cleaned_text
 
 
 async def translate_docx_to_zh_hant(
     src_docx_path: str,
     dst_docx_path: str,
-    progress_callback: Optional[ProgressCallback] = None
+    progress_callback: Optional[ProgressCallback] = None,
+    first_pass_path: Optional[str] = None
 ) -> TranslationStats:
     """
     Read a DOCX file, translate its content to Traditional Chinese,
     and save the result to a new file.
 
     Uses file-level semaphore to limit concurrent file translations.
+    Performs a second pass to catch any remaining untranslated English text.
 
     Args:
         src_docx_path: Path to the source DOCX file.
         dst_docx_path: Path where the translated DOCX will be saved.
         progress_callback: Optional callback for progress updates.
+        first_pass_path: Optional path to save the first pass result for debugging.
 
     Returns:
         TranslationStats with usage statistics.
@@ -564,7 +887,34 @@ async def translate_docx_to_zh_hant(
             # Write translations back to document
             write_translations_to_doc(doc, elements)
 
-            # Save the translated document
+            # Save first pass result for debugging if path provided
+            if first_pass_path:
+                doc.save(first_pass_path)
+
+            # === SECOND PASS: Find and translate remaining English text ===
+            if progress_callback:
+                await progress_callback("second_pass", 0, 0)
+
+            # Find elements with remaining English text
+            untranslated = find_untranslated_elements(doc)
+
+            if untranslated:
+                # Create chunks for second pass
+                second_chunks = create_chunks(untranslated)
+
+                # Translate remaining elements
+                if progress_callback:
+                    await progress_callback("translating_pass2", 0, len(second_chunks))
+
+                await translate_elements(client, model, untranslated, second_chunks, stats, progress_callback)
+
+                # Write second pass translations
+                write_translations_to_doc(doc, untranslated)
+
+                # Update stats
+                stats.translated_chars += sum(len(e.translated_text) for e in untranslated if e.translated_text)
+
+            # Save the final translated document
             doc.save(dst_docx_path)
 
             return stats

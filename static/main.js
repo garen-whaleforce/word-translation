@@ -394,12 +394,32 @@ document.addEventListener('DOMContentLoaded', () => {
             const li = document.createElement('li');
 
             if (item.status === 'completed' && item.result) {
-                const downloadUrl = item.result.original_name
-                    ? `${item.result.download_url}?filename=${encodeURIComponent(item.result.original_name)}`
-                    : item.result.download_url;
+                const originalName = item.result.original_name || 'file';
+                const downloadUrl = `${item.result.download_url}?filename=${encodeURIComponent(originalName)}`;
+
+                // Debug download URLs
+                const debugConvertedUrl = item.result.debug_converted_url
+                    ? `${item.result.debug_converted_url}?filename=${encodeURIComponent(originalName)}`
+                    : null;
+                const debugFirstPassUrl = item.result.debug_first_pass_url
+                    ? `${item.result.debug_first_pass_url}?filename=${encodeURIComponent(originalName)}`
+                    : null;
 
                 const stats = item.result.stats;
                 const statsText = `${formatTime(stats.processing_time_seconds)} | ${formatBytes(stats.output_file_size_bytes)} | $${stats.estimated_cost_usd.toFixed(4)}`;
+
+                // Build debug buttons HTML
+                let debugButtons = '';
+                if (debugConvertedUrl || debugFirstPassUrl) {
+                    debugButtons = '<div class="debug-buttons">';
+                    if (debugConvertedUrl) {
+                        debugButtons += `<a href="${debugConvertedUrl}" class="btn-debug" title="PDF轉Word後（翻譯前）">轉檔</a>`;
+                    }
+                    if (debugFirstPassUrl) {
+                        debugButtons += `<a href="${debugFirstPassUrl}" class="btn-debug" title="第一次翻譯後（補翻前）">Pass1</a>`;
+                    }
+                    debugButtons += '</div>';
+                }
 
                 li.className = 'result-item';
                 li.innerHTML = `
@@ -408,6 +428,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="result-item-stats">${statsText}</div>
                     </div>
                     <div class="result-item-actions">
+                        ${debugButtons}
                         <a href="${downloadUrl}" class="btn-download-small">下載</a>
                     </div>
                 `;

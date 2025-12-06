@@ -13,15 +13,21 @@ from urllib.parse import quote
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from app.converter import pdf_to_docx, ConversionError
+from app.converter import pdf_to_docx_async, ConversionError
 from app.docx_translate import translate_docx_to_zh_hant, TranslationError
 
 router = APIRouter()
 
 UPLOAD_DIR = Path("/tmp/uploads")
 EXPORT_DIR = Path("/tmp/exports")
+DEBUG_DIR = Path("/tmp/debug")  # For intermediate files
 
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
+
+# Ensure directories exist
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+DEBUG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @router.get("/healthz")
@@ -95,16 +101,22 @@ async def upload_and_translate(file: UploadFile = File(...)) -> StreamingRespons
             # Step 1: Convert PDF to DOCX
             yield send_event("progress", {"stage": "converting", "message": "PDF 轉換中..."})
 
-            docx_path = pdf_to_docx(str(pdf_path), str(UPLOAD_DIR))
+            docx_path = await pdf_to_docx_async(str(pdf_path), str(UPLOAD_DIR))
+
+            # Save converted DOCX for debugging
+            debug_converted_path = DEBUG_DIR / f"{file_id}_converted.docx"
+            import shutil
+            shutil.copy(docx_path, debug_converted_path)
 
             yield send_event("progress", {"stage": "converted", "message": "PDF 轉換完成"})
 
             # Step 2: Translate DOCX with progress updates
             translated_docx_path = EXPORT_DIR / f"{file_id}.docx"
+            first_pass_path = DEBUG_DIR / f"{file_id}_first_pass.docx"
 
-            # Start translation in background task
+            # Start translation in background task (with first_pass_path for debugging)
             translation_task = asyncio.create_task(
-                translate_docx_to_zh_hant(docx_path, str(translated_docx_path), progress_callback)
+                translate_docx_to_zh_hant(docx_path, str(translated_docx_path), progress_callback, str(first_pass_path))
             )
 
             # Stream progress updates
@@ -122,6 +134,15 @@ async def upload_and_translate(file: UploadFile = File(...)) -> StreamingRespons
                         })
                     elif progress["stage"] == "saving":
                         yield send_event("progress", {"stage": "saving", "message": "儲存文件中..."})
+                    elif progress["stage"] == "second_pass":
+                        yield send_event("progress", {"stage": "second_pass", "message": "掃描漏翻文字..."})
+                    elif progress["stage"] == "translating_pass2":
+                        yield send_event("progress", {
+                            "stage": "translating_pass2",
+                            "current": progress["current"],
+                            "total": progress["total"],
+                            "message": f"補翻中... ({progress['current']}/{progress['total']})"
+                        })
                 except asyncio.TimeoutError:
                     continue
 
@@ -131,17 +152,19 @@ async def upload_and_translate(file: UploadFile = File(...)) -> StreamingRespons
             # Get output file size
             output_file_size = translated_docx_path.stat().st_size
 
-            # Clean up intermediate files
+            # Clean up source PDF (keep debug files)
             pdf_path.unlink(missing_ok=True)
             Path(docx_path).unlink(missing_ok=True)
 
             # Calculate processing time
             processing_time = time.time() - start_time
 
-            # Send final result
+            # Send final result with debug download URLs
             yield send_event("complete", {
                 "file_id": file_id,
                 "download_url": f"/api/download/{file_id}",
+                "debug_converted_url": f"/api/debug/{file_id}/converted",
+                "debug_first_pass_url": f"/api/debug/{file_id}/first_pass",
                 "original_name": original_name,
                 "stats": {
                     "processing_time_seconds": round(processing_time, 2),
@@ -210,6 +233,53 @@ async def download_translated_file(
     download_filename = f"{filename}_translated.docx"
 
     # Encode filename for Content-Disposition (RFC 5987) to handle Chinese characters
+    encoded_filename = quote(download_filename)
+
+    return FileResponse(
+        path=str(file_path),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+        }
+    )
+
+
+@router.get("/debug/{file_id}/{debug_type}")
+async def download_debug_file(
+    file_id: str,
+    debug_type: str,
+    filename: str = Query(default="debug", description="Original filename for download")
+) -> FileResponse:
+    """
+    Download debug files (converted or first_pass).
+
+    Args:
+        file_id: The unique identifier for the file.
+        debug_type: Type of debug file ('converted' or 'first_pass').
+        filename: Original filename to use for the download.
+
+    Returns:
+        The requested debug DOCX file.
+
+    Raises:
+        HTTPException: If the file is not found.
+    """
+    if debug_type == "converted":
+        file_path = DEBUG_DIR / f"{file_id}_converted.docx"
+        suffix = "_converted"
+    elif debug_type == "first_pass":
+        file_path = DEBUG_DIR / f"{file_id}_first_pass.docx"
+        suffix = "_first_pass"
+    else:
+        raise HTTPException(status_code=400, detail="Invalid debug type")
+
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Debug file not found. It may have expired or never existed."
+        )
+
+    download_filename = f"{filename}{suffix}.docx"
     encoded_filename = quote(download_filename)
 
     return FileResponse(
