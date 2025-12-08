@@ -38,6 +38,7 @@ backup-*/
 # Logs
 *.log
 
-# Test files (keep in repo for testing)
-# *.pdf
-# *.docx
+# Test files
+*.pdf
+*.docx
+test/
